@@ -1,0 +1,179 @@
+"""
+main.py
+-------
+Mock Investment Bank API — application entrypoint.
+
+Startup sequence:
+  1. Lifespan handler runs ``generate_all(seed)`` to populate the
+     in-memory store before any request is served.
+  2. All four domain routers are mounted under /api/v1.
+  3. A custom exception handler ensures all errors conform to the
+     standard ErrorResponse schema.
+
+Run with:
+    uvicorn main:app --reload --port 8000
+
+Docs available at:
+    http://localhost:8000/docs       (Swagger UI)
+    http://localhost:8000/redoc      (ReDoc)
+    http://localhost:8000/openapi.json
+"""
+
+from contextlib import asynccontextmanager
+
+from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+
+from config import settings
+from routers import clients, deals, market, products
+from seed.generator import generate_all
+
+
+# ---------------------------------------------------------------------------
+# Lifespan — data generation runs once before the first request
+# ---------------------------------------------------------------------------
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Generate all seeded mock data at startup."""
+    generate_all(seed=settings.SEED)
+    yield
+    # Nothing to tear down — in-memory store is GC'd with the process
+
+
+# ---------------------------------------------------------------------------
+# App
+# ---------------------------------------------------------------------------
+
+
+app = FastAPI(
+    title=settings.TITLE,
+    description=settings.DESCRIPTION,
+    version=settings.VERSION,
+    lifespan=lifespan,
+    docs_url="/docs",
+    redoc_url="/redoc",
+    openapi_url="/openapi.json",
+    openapi_tags=[
+        {
+            "name": "Market Data",
+            "description": (
+                "Instruments, EOD price history, implied volatility surfaces, "
+                "and market index constituents."
+            ),
+        },
+        {
+            "name": "Clients & Counterparties",
+            "description": (
+                "Client profiles, contact persons, and credit/trading limits. "
+                "Start here to resolve a client name to a ``client_id``."
+            ),
+        },
+        {
+            "name": "Deals & Trades",
+            "description": (
+                "Deal headers, individual trades, and P&L breakdowns. "
+                "Requires a ``client_id`` (from /clients) to list deals."
+            ),
+        },
+        {
+            "name": "Product Catalogue",
+            "description": "Product definitions and term sheets for all supported instrument types.",
+        },
+        {
+            "name": "Health",
+            "description": "Liveness and readiness probes.",
+        },
+    ],
+)
+
+
+# ---------------------------------------------------------------------------
+# Exception handlers — enforce standard ErrorResponse shape
+# ---------------------------------------------------------------------------
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException) -> JSONResponse:
+    """
+    Intercept FastAPI HTTPExceptions and ensure they always return the
+    standard ``ErrorResponse`` shape, even when raised with a plain string detail.
+    """
+    if isinstance(exc.detail, dict):
+        # Router raised with a structured dict — pass through
+        body = exc.detail
+    else:
+        # Router raised with a plain string (e.g. FastAPI internals)
+        body = {"detail": str(exc.detail), "code": "INTERNAL_ERROR"}
+
+    return JSONResponse(status_code=exc.status_code, content=body)
+
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(
+    request: Request, exc: RequestValidationError
+) -> JSONResponse:
+    """
+    Convert Pydantic / FastAPI validation errors (422) to the standard
+    ErrorResponse shape with ``code=VALIDATION_ERROR``.
+    """
+    errors = exc.errors()
+    first = errors[0] if errors else {}
+    field = ".".join(str(loc) for loc in first.get("loc", [])) or None
+    return JSONResponse(
+        status_code=422,
+        content={
+            "detail": first.get("msg", "Validation error."),
+            "code": "VALIDATION_ERROR",
+            "field": field,
+        },
+    )
+
+
+# ---------------------------------------------------------------------------
+# Routers
+# ---------------------------------------------------------------------------
+
+PREFIX = settings.API_PREFIX  # /api/v1
+
+app.include_router(market.router, prefix=PREFIX)
+app.include_router(clients.router, prefix=PREFIX)
+app.include_router(deals.router, prefix=PREFIX)
+app.include_router(products.router, prefix=PREFIX)
+
+
+# ---------------------------------------------------------------------------
+# Health endpoints
+# ---------------------------------------------------------------------------
+
+
+@app.get("/health", tags=["Health"], summary="Liveness probe")
+def health() -> dict:
+    """Returns 200 OK when the application process is running."""
+    return {"status": "ok"}
+
+
+@app.get("/health/ready", tags=["Health"], summary="Readiness probe")
+def ready() -> dict:
+    """
+    Returns 200 OK only after the in-memory store has been populated.
+    Can be used by orchestrators to delay traffic until data is ready.
+    """
+    from seed.store import store
+
+    ready = bool(store.instruments)
+    if not ready:
+        from fastapi import HTTPException
+        raise HTTPException(
+            status_code=503,
+            detail={"detail": "Data store not yet initialised.", "code": "NOT_READY"},
+        )
+    return {
+        "status": "ready",
+        "instruments": len(store.instruments),
+        "clients": len(store.clients),
+        "deals": len(store.deals),
+        "products": len(store.products),
+    }

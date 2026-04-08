@@ -1,0 +1,110 @@
+"""
+routers/products.py
+-------------------
+Product Catalogue endpoints:
+
+  GET /products                     — list products (filterable)
+  GET /products/{product_id}        — full product definition
+  GET /products/{product_id}/terms  — product term sheet
+"""
+
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from dependencies import PaginationParams, pagination_dep
+from models.common import Page, paginate
+from models.enums import AssetClass, ProductType
+from models.product import ProductFull, ProductSummary, TermSheet
+from seed.store import store
+
+router = APIRouter(prefix="/products", tags=["Product Catalogue"])
+
+
+def _get_product_or_404(product_id: str) -> dict:
+    """Return the product dict or raise HTTP 404."""
+    product = store.products.get(product_id)
+    if product is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "detail": f"Product '{product_id}' not found.",
+                "code": "NOT_FOUND",
+            },
+        )
+    return product
+
+
+# ---------------------------------------------------------------------------
+# Products
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "",
+    response_model=Page[ProductSummary],
+    summary="List products",
+    description=(
+        "Returns a paginated list of products from the catalogue. "
+        "Filter by asset class, product type, or underlying ticker."
+    ),
+)
+def list_products(
+    asset_class: Optional[AssetClass] = Query(None, description="Filter by asset class."),
+    type: Optional[ProductType] = Query(None, description="Filter by product type."),
+    underlying: Optional[str] = Query(
+        None, description="Filter by underlying ticker (e.g. 'AAPL')."
+    ),
+    pagination: PaginationParams = Depends(pagination_dep),
+) -> dict:
+    items = list(store.products.values())
+
+    if asset_class is not None:
+        items = [p for p in items if p["asset_class"] == asset_class.value]
+    if type is not None:
+        items = [p for p in items if p["type"] == type.value]
+    if underlying:
+        items = [p for p in items if p.get("underlying", "").upper() == underlying.upper()]
+
+    return paginate(items, pagination.page, pagination.page_size)
+
+
+@router.get(
+    "/{product_id}",
+    response_model=ProductFull,
+    summary="Get product",
+    description="Returns the full product definition including eligibility and operational metadata.",
+    responses={404: {"description": "Product not found."}},
+)
+def get_product(product_id: str) -> dict:
+    return _get_product_or_404(product_id)
+
+
+# ---------------------------------------------------------------------------
+# Term sheets
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{product_id}/terms",
+    response_model=TermSheet,
+    summary="Get product term sheet",
+    description=(
+        "Returns the term sheet for a product. "
+        "The shape of the ``terms`` object varies by product type — "
+        "see the schema description for details per type."
+    ),
+    responses={404: {"description": "Product not found."}},
+)
+def get_terms(product_id: str) -> dict:
+    _get_product_or_404(product_id)
+    term_sheet = store.term_sheets.get(product_id)
+    if term_sheet is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "detail": f"Term sheet not found for product '{product_id}'.",
+                "code": "NOT_FOUND",
+            },
+        )
+    return term_sheet

@@ -1,0 +1,198 @@
+"""
+models/deal.py
+--------------
+Pydantic models for the Deals & Trades domain:
+  - DealSummary      — compact deal view for list endpoints
+  - DealFull         — full deal header
+  - TradeSummary     — compact trade view for list endpoints
+  - ProductSnapshot  — product details captured at trade time
+  - TradeFull        — full trade record with product snapshot
+  - TradePnL         — per-trade P&L contribution
+  - DealPnL          — aggregated deal-level P&L
+"""
+
+from datetime import date, datetime
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
+
+from models.enums import AssetClass, DealStatus, TradeDirection, TradeStatus
+
+
+# ---------------------------------------------------------------------------
+# Deal
+# ---------------------------------------------------------------------------
+
+
+class DealSummary(BaseModel):
+    """
+    Compact deal record for paginated list responses.
+
+    Returned by GET /deals.
+    """
+
+    deal_id: str = Field(..., description="UUID v4 deal identifier.")
+    client_id: str = Field(..., description="UUID of the client party to the deal.")
+    client_name: str = Field(..., description="Display name of the client (denormalised for convenience).")
+    product_id: str = Field(..., description="UUID of the underlying product.")
+    product_name: str = Field(..., description="Display name of the product.")
+    asset_class: AssetClass = Field(..., description="Asset class of the deal.")
+    desk: str = Field(..., description="Trading desk responsible (e.g. 'EQ_FLOW', 'EQ_DERIV', 'STRUCTURING').")
+    notional_usd: float = Field(..., description="Deal notional in USD.")
+    currency: str = Field(..., description="Settlement currency of the deal.")
+    status: DealStatus = Field(..., description="Current lifecycle status.")
+    created_at: datetime = Field(..., description="ISO 8601 timestamp of deal creation.")
+
+    model_config = {"json_schema_extra": {
+        "example": {
+            "deal_id": "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d",
+            "client_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+            "client_name": "Citadel Capital",
+            "product_id": "7g8h9i0j-1k2l-3m4n-5o6p-7q8r9s0t1u2v",
+            "product_name": "Vanilla Call Option on AAPL",
+            "asset_class": "EQUITY_DERIVATIVE",
+            "desk": "EQ_DERIV",
+            "notional_usd": 15000000,
+            "currency": "USD",
+            "status": "ACTIVE",
+            "created_at": "2024-02-10T09:32:00Z",
+        }
+    }}
+
+
+class DealFull(DealSummary):
+    """
+    Full deal record including personnel and timeline metadata.
+
+    Returned by GET /deals/{deal_id}.
+    Extends DealSummary with additional fields.
+    """
+
+    notional_local: float = Field(
+        ..., description="Notional in the deal's local currency (same as notional_usd when currency='USD')."
+    )
+    trader: str = Field(..., description="Full name of the covering trader.")
+    sales: str = Field(..., description="Full name of the covering sales person.")
+    last_updated_at: datetime = Field(..., description="ISO 8601 timestamp of last status change.")
+    settlement_date: Optional[date] = Field(None, description="Expected T+N settlement date.")
+    maturity_date: Optional[date] = Field(None, description="Deal / product maturity date (null for spot trades).")
+    num_trades: int = Field(..., description="Number of individual trades booked under this deal.")
+
+
+# ---------------------------------------------------------------------------
+# Trade
+# ---------------------------------------------------------------------------
+
+
+class TradeSummary(BaseModel):
+    """
+    Compact trade record for paginated list responses.
+
+    Returned by GET /deals/{deal_id}/trades.
+    """
+
+    trade_id: str = Field(..., description="UUID v4 trade identifier.")
+    deal_id: str = Field(..., description="UUID of the parent deal.")
+    direction: TradeDirection = Field(..., description="BUY or SELL from the bank's perspective.")
+    quantity: int = Field(..., description="Number of units / contracts traded.")
+    price: float = Field(..., description="Execution price per unit.")
+    notional_usd: float = Field(..., description="Trade notional in USD (quantity × price, approximately).")
+    currency: str = Field(..., description="Trade settlement currency.")
+    status: TradeStatus = Field(..., description="Current trade lifecycle status.")
+    trade_date: date = Field(..., description="Date the trade was executed.")
+    settlement_date: date = Field(..., description="Expected settlement date.")
+
+
+class ProductSnapshot(BaseModel):
+    """
+    Snapshot of product-specific terms captured at trade booking time.
+
+    Stored as a flexible dict internally; surfaced with typed keys here.
+    The exact keys depend on the product type — see the spec for examples.
+    """
+
+    product_type: str = Field(..., description="Product type at the time of trade (e.g. 'VANILLA_OPTION').")
+    underlying: str = Field(..., description="Underlying instrument ticker.")
+    details: Dict[str, Any] = Field(
+        ...,
+        description=(
+            "Product-specific term fields. "
+            "For VANILLA_OPTION: option_type, strike, expiry, exercise_style, settlement. "
+            "For BARRIER_OPTION: adds barrier_type, barrier_level, barrier_observation. "
+            "For AUTOCALL: autocall_barrier_pct, coupon_barrier_pct, coupon_rate_pa, etc."
+        ),
+    )
+
+
+class TradeFull(TradeSummary):
+    """
+    Full trade record including product snapshot, execution metadata and fees.
+
+    Returned by GET /deals/{deal_id}/trades/{trade_id}.
+    Extends TradeSummary with additional fields.
+    """
+
+    trader: str = Field(..., description="Full name of the trader who executed the trade.")
+    execution_venue: str = Field(..., description="Execution venue (e.g. 'OTC', 'XLON', 'XNAS').")
+    product_snapshot: ProductSnapshot = Field(
+        ..., description="Product terms as captured at trade booking time."
+    )
+    fees_usd: float = Field(..., description="Total fees charged on this trade in USD.")
+    counterparty_reference: str = Field(
+        ..., description="Client-side reference number provided by the counterparty."
+    )
+
+
+# ---------------------------------------------------------------------------
+# P&L
+# ---------------------------------------------------------------------------
+
+
+class TradePnL(BaseModel):
+    """Per-trade P&L contribution within a deal P&L breakdown."""
+
+    trade_id: str = Field(..., description="UUID of the trade.")
+    realised_pnl: float = Field(..., description="Realised P&L on closed / settled portions.")
+    unrealised_pnl: float = Field(..., description="Mark-to-market P&L on open positions.")
+    fees: float = Field(..., description="Fees attributed to this trade.")
+
+
+class DealPnL(BaseModel):
+    """
+    Aggregated P&L breakdown for a deal.
+
+    Returned as a single object (not paginated) by GET /deals/{deal_id}/pnl.
+    """
+
+    deal_id: str = Field(..., description="UUID of the deal.")
+    as_of: date = Field(..., description="Valuation date for the P&L snapshot.")
+    currency: str = Field(..., description="Currency of all P&L figures.")
+    realised_pnl: float = Field(..., description="Total realised P&L across all trades.")
+    unrealised_pnl: float = Field(..., description="Total mark-to-market P&L on open positions.")
+    total_pnl: float = Field(..., description="realised_pnl + unrealised_pnl.")
+    fees: float = Field(..., description="Total fees charged on the deal.")
+    net_pnl: float = Field(..., description="total_pnl − fees.")
+    pnl_by_trade: List[TradePnL] = Field(
+        ..., description="Per-trade breakdown summing to the deal totals."
+    )
+
+    model_config = {"json_schema_extra": {
+        "example": {
+            "deal_id": "1a2b3c4d-5e6f-7a8b-9c0d-1e2f3a4b5c6d",
+            "as_of": "2024-03-15",
+            "currency": "USD",
+            "realised_pnl": 42000,
+            "unrealised_pnl": -8500,
+            "total_pnl": 33500,
+            "fees": 1200,
+            "net_pnl": 32300,
+            "pnl_by_trade": [
+                {
+                    "trade_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+                    "realised_pnl": 42000,
+                    "unrealised_pnl": -8500,
+                    "fees": 850,
+                }
+            ],
+        }
+    }}

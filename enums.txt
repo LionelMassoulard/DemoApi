@@ -1,0 +1,131 @@
+"""
+models/enums.py
+---------------
+All enumerations used across the Mock Investment Bank API.
+Centralised here so every model imports from a single source of truth.
+"""
+
+from enum import Enum
+
+
+# ---------------------------------------------------------------------------
+# Market / Instrument
+# ---------------------------------------------------------------------------
+
+
+class InstrumentType(str, Enum):
+    """Tradeable instrument categories."""
+    STOCK = "STOCK"
+    ETF = "ETF"
+    INDEX = "INDEX"
+
+
+class Currency(str, Enum):
+    """Supported settlement / pricing currencies."""
+    USD = "USD"
+    EUR = "EUR"
+    GBP = "GBP"
+    JPY = "JPY"
+    CHF = "CHF"
+
+
+# ---------------------------------------------------------------------------
+# Client / Counterparty
+# ---------------------------------------------------------------------------
+
+
+class ClientType(str, Enum):
+    """Institutional client categories."""
+    HEDGE_FUND = "HEDGE_FUND"
+    ASSET_MANAGER = "ASSET_MANAGER"
+    CORPORATE = "CORPORATE"
+    BANK = "BANK"
+
+
+class ClientRegion(str, Enum):
+    """Geographic region of the client's headquarters."""
+    EMEA = "EMEA"
+    AMERICAS = "AMERICAS"
+    APAC = "APAC"
+
+
+class ClientSegment(str, Enum):
+    """Commercial importance tier assigned to the client."""
+    TIER_1 = "TIER_1"
+    TIER_2 = "TIER_2"
+    TIER_3 = "TIER_3"
+
+
+class CreditRating(str, Enum):
+    """Internal / external credit rating of the client."""
+    AAA = "AAA"
+    AA = "AA"
+    A = "A"
+    BBB = "BBB"
+    BB = "BB"
+    B = "B"
+    CCC = "CCC"
+    NR = "NR"
+
+
+# ---------------------------------------------------------------------------
+# Deals & Trades
+# ---------------------------------------------------------------------------
+
+
+class DealStatus(str, Enum):
+    """Lifecycle status of a deal."""
+    PENDING = "PENDING"
+    ACTIVE = "ACTIVE"
+    CLOSED = "CLOSED"
+    CANCELLED = "CANCELLED"
+
+
+class TradeStatus(str, Enum):
+    """Lifecycle status of an individual trade."""
+    PENDING = "PENDING"
+    CONFIRMED = "CONFIRMED"
+    SETTLED = "SETTLED"
+    CANCELLED = "CANCELLED"
+
+
+class TradeDirection(str, Enum):
+    """Direction of a trade from the bank's perspective."""
+    BUY = "BUY"
+    SELL = "SELL"
+
+
+# ---------------------------------------------------------------------------
+# Products
+# ---------------------------------------------------------------------------
+
+
+class AssetClass(str, Enum):
+    """Broad asset-class classification."""
+    EQUITY = "EQUITY"
+    EQUITY_DERIVATIVE = "EQUITY_DERIVATIVE"
+
+
+class ProductType(str, Enum):
+    """Specific product / instrument type."""
+    STOCK = "STOCK"
+    ETF = "ETF"
+    VANILLA_OPTION = "VANILLA_OPTION"
+    BARRIER_OPTION = "BARRIER_OPTION"
+    AUTOCALL = "AUTOCALL"
+    SWAP = "SWAP"
+    FORWARD = "FORWARD"
+
+
+class OptionType(str, Enum):
+    """Option direction."""
+    CALL = "CALL"
+    PUT = "PUT"
+
+
+class BarrierType(str, Enum):
+    """Knock-in / knock-out barrier flavour."""
+    UP_AND_OUT = "UP_AND_OUT"
+    DOWN_AND_OUT = "DOWN_AND_OUT"
+    UP_AND_IN = "UP_AND_IN"
+    DOWN_AND_IN = "DOWN_AND_IN"

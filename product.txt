@@ -1,0 +1,156 @@
+"""
+models/product.py
+-----------------
+Pydantic models for the Product Catalogue domain:
+  - ProductSummary   — compact view for list endpoints
+  - ProductFull      — full product definition
+  - TermSheet        — product-type-specific term sheet (flexible schema)
+  - Typed term models for each product type (for documentation clarity)
+"""
+
+from datetime import datetime
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field
+
+from models.enums import AssetClass, ClientType, Currency, ProductType
+
+
+# ---------------------------------------------------------------------------
+# Product
+# ---------------------------------------------------------------------------
+
+
+class ProductSummary(BaseModel):
+    """
+    Compact product record for paginated list responses.
+
+    Returned by GET /products.
+    """
+
+    product_id: str = Field(..., description="UUID v4 product identifier.")
+    name: str = Field(..., description="Human-readable product name.")
+    type: ProductType = Field(..., description="Product / instrument type.")
+    asset_class: AssetClass = Field(..., description="Broad asset class.")
+    underlying: Optional[str] = Field(
+        None, description="Underlying ticker (null for plain stocks / ETFs with no single underlying)."
+    )
+    currency: Currency = Field(..., description="Primary product currency.")
+
+    model_config = {"json_schema_extra": {
+        "example": {
+            "product_id": "7g8h9i0j-1k2l-3m4n-5o6p-7q8r9s0t1u2v",
+            "name": "Vanilla Call Option on AAPL",
+            "type": "VANILLA_OPTION",
+            "asset_class": "EQUITY_DERIVATIVE",
+            "underlying": "AAPL",
+            "currency": "USD",
+        }
+    }}
+
+
+class ProductFull(ProductSummary):
+    """
+    Full product definition including eligibility and operational metadata.
+
+    Returned by GET /products/{product_id}.
+    Extends ProductSummary with additional fields.
+    """
+
+    description: str = Field(..., description="Plain-language product description.")
+    approved_for_client_types: List[ClientType] = Field(
+        ..., description="Client types eligible to trade this product."
+    )
+    min_notional_usd: float = Field(
+        ..., description="Minimum trade notional in USD."
+    )
+    created_at: datetime = Field(..., description="ISO 8601 timestamp when the product was added to the catalogue.")
+
+
+# ---------------------------------------------------------------------------
+# Term sheets
+# ---------------------------------------------------------------------------
+
+
+class TermSheet(BaseModel):
+    """
+    Product term sheet with type-specific fields.
+
+    Returned by GET /products/{product_id}/terms.
+
+    The ``terms`` dict is deliberately flexible to accommodate different
+    product types without requiring a union of rigid models.
+    See the ``TermsXxx`` classes below for documented field shapes per type.
+    """
+
+    product_id: str = Field(..., description="UUID of the product this term sheet belongs to.")
+    product_type: ProductType = Field(..., description="Product type determining the shape of ``terms``.")
+    terms: Dict[str, Any] = Field(
+        ...,
+        description=(
+            "Product-specific term fields. Shape varies by product_type:\n"
+            "  VANILLA_OPTION  → option_type, underlying, strike_type, exercise_style, settlement, "
+            "premium_currency, typical_tenors_months\n"
+            "  BARRIER_OPTION  → adds barrier_type, barrier_observation\n"
+            "  AUTOCALL        → underlying, autocall_barrier_pct, coupon_barrier_pct, "
+            "protection_barrier_pct, observation_frequency, coupon_rate_pa, settlement, currency\n"
+            "  STOCK / ETF     → exchange, isin, lot_size\n"
+            "  FORWARD         → underlying, settlement, premium_currency\n"
+            "  SWAP            → underlying, leg1_type, leg2_type, reset_frequency"
+        ),
+    )
+
+    model_config = {"json_schema_extra": {
+        "example": {
+            "product_id": "7g8h9i0j-1k2l-3m4n-5o6p-7q8r9s0t1u2v",
+            "product_type": "VANILLA_OPTION",
+            "terms": {
+                "option_type": "CALL",
+                "underlying": "AAPL",
+                "strike_type": "FIXED",
+                "exercise_style": "EUROPEAN",
+                "settlement": "CASH",
+                "premium_currency": "USD",
+                "typical_tenors_months": [1, 3, 6, 12, 18, 24],
+            },
+        }
+    }}
+
+
+# ---------------------------------------------------------------------------
+# Documented term shapes (used only for OpenAPI description — not enforced)
+# ---------------------------------------------------------------------------
+
+
+class VanillaOptionTerms(BaseModel):
+    """Expected fields inside TermSheet.terms for VANILLA_OPTION products."""
+    option_type: str
+    underlying: str
+    strike_type: str = Field(..., description="'FIXED' or 'ATM_FORWARD'")
+    exercise_style: str = Field(..., description="'EUROPEAN' or 'AMERICAN'")
+    settlement: str = Field(..., description="'CASH' or 'PHYSICAL'")
+    premium_currency: str
+    typical_tenors_months: List[int]
+
+
+class BarrierOptionTerms(BaseModel):
+    """Expected fields inside TermSheet.terms for BARRIER_OPTION products."""
+    option_type: str
+    underlying: str
+    barrier_type: str
+    barrier_observation: str = Field(..., description="'CONTINUOUS' or 'DAILY_CLOSE'")
+    exercise_style: str
+    settlement: str
+    premium_currency: str
+
+
+class AutocallTerms(BaseModel):
+    """Expected fields inside TermSheet.terms for AUTOCALL products."""
+    underlying: str
+    autocall_barrier_pct: float = Field(..., description="Autocall trigger as fraction of initial spot (e.g. 1.0 = 100%).")
+    coupon_barrier_pct: float = Field(..., description="Minimum level for coupon payment (e.g. 0.7 = 70%).")
+    protection_barrier_pct: float = Field(..., description="Capital protection barrier (e.g. 0.6 = 60%).")
+    observation_frequency: str = Field(..., description="'MONTHLY', 'QUARTERLY', or 'ANNUAL'")
+    coupon_rate_pa: float = Field(..., description="Annual coupon rate (e.g. 0.08 = 8%).")
+    settlement: str
+    currency: str

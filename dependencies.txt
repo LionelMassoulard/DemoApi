@@ -1,0 +1,48 @@
+"""
+dependencies.py
+---------------
+Shared FastAPI dependency-injection helpers used across all routers.
+
+Currently provides:
+  - PaginationParams  — validated page / page_size query parameters
+  - pagination_dep    — ``Depends``-compatible factory
+"""
+
+from dataclasses import dataclass
+
+from fastapi import Depends, HTTPException, Query
+
+
+@dataclass
+class PaginationParams:
+    """
+    Validated pagination query parameters injected via ``Depends``.
+
+    Attributes
+    ----------
+    page:
+        1-indexed page number.  Must be ≥ 1.
+    page_size:
+        Number of items per page.  Clamped to [1, 100] by validation.
+    """
+
+    page: int
+    page_size: int
+
+
+def pagination_dep(
+    page: int = Query(default=1, ge=1, description="Page number (1-indexed)."),
+    page_size: int = Query(
+        default=20,
+        ge=1,
+        le=100,
+        description="Items per page (1–100).",
+    ),
+) -> PaginationParams:
+    """
+    FastAPI dependency that parses and validates ``?page`` and ``?page_size``.
+
+    Raises HTTP 400 if page_size > 100 (belt-and-suspenders on top of the
+    Query constraint, which FastAPI surfaces as a 422).
+    """
+    return PaginationParams(page=page, page_size=page_size)

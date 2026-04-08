@@ -1,0 +1,144 @@
+"""
+routers/clients.py
+------------------
+Client & Counterparty endpoints:
+
+  GET /clients                        — list clients (filterable)
+  GET /clients/{client_id}            — full client profile
+  GET /clients/{client_id}/contacts   — contact persons
+  GET /clients/{client_id}/limits     — credit & trading limits
+"""
+
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from dependencies import PaginationParams, pagination_dep
+from models.client import ClientFull, ClientLimits, ClientSummary, Contact
+from models.common import Page, paginate
+from models.enums import ClientRegion, ClientSegment, ClientType
+from seed.store import store
+
+router = APIRouter(prefix="/clients", tags=["Clients & Counterparties"])
+
+
+def _get_client_or_404(client_id: str) -> dict:
+    """Return the client dict or raise HTTP 404."""
+    client = store.clients.get(client_id)
+    if client is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "detail": f"Client '{client_id}' not found.",
+                "code": "NOT_FOUND",
+            },
+        )
+    return client
+
+
+# ---------------------------------------------------------------------------
+# Client list
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "",
+    response_model=Page[ClientSummary],
+    summary="List clients",
+    description=(
+        "Returns a paginated list of clients. "
+        "All filters are optional and combinable. "
+        "The ``name`` filter performs a case-insensitive partial match."
+    ),
+)
+def list_clients(
+    name: Optional[str] = Query(
+        None, description="Case-insensitive partial match on the client name."
+    ),
+    type: Optional[ClientType] = Query(None, description="Filter by client type."),
+    region: Optional[ClientRegion] = Query(None, description="Filter by geographic region."),
+    segment: Optional[ClientSegment] = Query(None, description="Filter by commercial segment."),
+    pagination: PaginationParams = Depends(pagination_dep),
+) -> dict:
+    items = list(store.clients.values())
+
+    if name:
+        name_lower = name.lower()
+        items = [c for c in items if name_lower in c["name"].lower()]
+    if type is not None:
+        items = [c for c in items if c["type"] == type.value]
+    if region is not None:
+        items = [c for c in items if c["region"] == region.value]
+    if segment is not None:
+        items = [c for c in items if c["segment"] == segment.value]
+
+    return paginate(items, pagination.page, pagination.page_size)
+
+
+# ---------------------------------------------------------------------------
+# Client profile
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{client_id}",
+    response_model=ClientFull,
+    summary="Get client profile",
+    description="Returns the full profile for a single client including onboarding and RM metadata.",
+    responses={404: {"description": "Client not found."}},
+)
+def get_client(client_id: str) -> dict:
+    return _get_client_or_404(client_id)
+
+
+# ---------------------------------------------------------------------------
+# Contacts
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{client_id}/contacts",
+    response_model=Page[Contact],
+    summary="Get client contacts",
+    description=(
+        "Returns the contact persons associated with a client. "
+        "The primary contact is always listed first."
+    ),
+    responses={404: {"description": "Client not found."}},
+)
+def get_contacts(
+    client_id: str,
+    pagination: PaginationParams = Depends(pagination_dep),
+) -> dict:
+    _get_client_or_404(client_id)
+    contacts = store.contacts.get(client_id, [])
+    return paginate(contacts, pagination.page, pagination.page_size)
+
+
+# ---------------------------------------------------------------------------
+# Limits
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{client_id}/limits",
+    response_model=ClientLimits,
+    summary="Get client limits",
+    description=(
+        "Returns the credit and trading limits assigned to a client. "
+        "Single object — not paginated."
+    ),
+    responses={404: {"description": "Client not found."}},
+)
+def get_limits(client_id: str) -> dict:
+    _get_client_or_404(client_id)
+    limits = store.limits.get(client_id)
+    if limits is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "detail": f"Limits not found for client '{client_id}'.",
+                "code": "NOT_FOUND",
+            },
+        )
+    return limits

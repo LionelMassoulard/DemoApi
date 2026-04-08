@@ -1,0 +1,54 @@
+"""
+seed/store.py
+-------------
+Singleton in-memory data store.
+
+All generated data is held in plain Python dicts / lists indexed by
+their primary key.  The store is populated once at startup by
+``seed/generator.py`` and is then read-only for the lifetime of the
+process.
+
+Layout
+------
+store.instruments          dict[ticker, dict]
+store.price_history        dict[ticker, list[dict]]   — sorted desc by date
+store.vol_surfaces         dict[ticker, dict]
+store.indices              dict[index_id, dict]
+store.index_constituents   dict[index_id, list[dict]] — sorted desc by weight
+store.clients              dict[client_id, dict]
+store.contacts             dict[client_id, list[dict]] — primary first
+store.limits               dict[client_id, dict]
+store.deals                dict[deal_id, dict]
+store.trades               dict[deal_id, dict[trade_id, dict]]
+store.products             dict[product_id, dict]
+store.term_sheets          dict[product_id, dict]
+"""
+
+
+class _Store:
+    """Central in-memory data store (populated once at startup)."""
+
+    def __init__(self) -> None:
+        self.instruments: dict = {}
+        self.price_history: dict = {}
+        self.vol_surfaces: dict = {}
+        self.indices: dict = {}
+        self.index_constituents: dict = {}
+
+        self.clients: dict = {}
+        self.contacts: dict = {}
+        self.limits: dict = {}
+
+        self.deals: dict = {}
+        self.trades: dict = {}  # {deal_id: {trade_id: trade_dict}}
+
+        self.products: dict = {}
+        self.term_sheets: dict = {}
+
+    def clear(self) -> None:
+        """Reset all data (useful for testing)."""
+        self.__init__()
+
+
+# Module-level singleton — imported everywhere
+store = _Store()

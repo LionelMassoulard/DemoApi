@@ -1,0 +1,169 @@
+"""
+models/client.py
+----------------
+Pydantic models for the Client & Counterparty domain:
+  - ClientSummary  — compact view returned in list endpoints
+  - ClientFull     — detailed profile returned by GET /clients/{id}
+  - Contact        — contact person associated with a client
+  - ClientLimits   — credit and trading limits
+"""
+
+from datetime import date
+from typing import List, Optional
+
+from pydantic import BaseModel, EmailStr, Field
+
+from models.enums import (
+    AssetClass,
+    ClientRegion,
+    ClientSegment,
+    ClientType,
+    CreditRating,
+    ProductType,
+)
+
+
+# ---------------------------------------------------------------------------
+# Client
+# ---------------------------------------------------------------------------
+
+
+class ClientSummary(BaseModel):
+    """
+    Compact client record returned in paginated list responses.
+
+    Returned by GET /clients.
+    """
+
+    client_id: str = Field(..., description="UUID v4 unique identifier.")
+    name: str = Field(..., description="Client / institution name.")
+    type: ClientType = Field(..., description="Institutional category.")
+    region: ClientRegion = Field(..., description="Geographic region of HQ.")
+    segment: ClientSegment = Field(..., description="Commercial importance tier.")
+    credit_rating: CreditRating = Field(..., description="Internal credit rating.")
+
+    model_config = {"json_schema_extra": {
+        "example": {
+            "client_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+            "name": "Citadel Capital",
+            "type": "HEDGE_FUND",
+            "region": "AMERICAS",
+            "segment": "TIER_1",
+            "credit_rating": "A",
+        }
+    }}
+
+
+class ClientFull(ClientSummary):
+    """
+    Full client profile including onboarding and relationship metadata.
+
+    Returned by GET /clients/{client_id}.
+    Extends ClientSummary with additional fields.
+    """
+
+    country: str = Field(..., description="ISO 3166-1 alpha-2 country code (e.g. 'US').")
+    city: str = Field(..., description="City of the client's main office.")
+    onboarding_date: date = Field(..., description="Date the client was onboarded.")
+    relationship_manager: str = Field(..., description="Full name of the assigned RM.")
+    active: bool = Field(..., description="Whether the client relationship is currently active.")
+    aum_usd: Optional[float] = Field(
+        None,
+        description="Assets under management in USD (applicable for HFs and AMs).",
+    )
+
+    model_config = {"json_schema_extra": {
+        "example": {
+            "client_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+            "name": "Citadel Capital",
+            "type": "HEDGE_FUND",
+            "region": "AMERICAS",
+            "segment": "TIER_1",
+            "credit_rating": "A",
+            "country": "US",
+            "city": "Chicago",
+            "onboarding_date": "2015-03-12",
+            "relationship_manager": "Sophie Martin",
+            "active": True,
+            "aum_usd": 60000000000,
+        }
+    }}
+
+
+# ---------------------------------------------------------------------------
+# Contacts
+# ---------------------------------------------------------------------------
+
+
+class Contact(BaseModel):
+    """
+    A contact person associated with a client institution.
+
+    Returned (paginated, primary first) by GET /clients/{client_id}/contacts.
+    """
+
+    contact_id: str = Field(..., description="UUID v4 unique identifier.")
+    client_id: str = Field(..., description="UUID of the parent client.")
+    first_name: str = Field(..., description="Contact's first name.")
+    last_name: str = Field(..., description="Contact's last name.")
+    title: str = Field(..., description="Job title (e.g. 'Portfolio Manager').")
+    email: str = Field(..., description="Work email address.")
+    phone: str = Field(..., description="Work phone number in E.164 format.")
+    primary: bool = Field(
+        ..., description="True if this is the primary contact for the client."
+    )
+
+    model_config = {"json_schema_extra": {
+        "example": {
+            "contact_id": "4ca91f64-5717-4562-b3fc-2c963f66afb7",
+            "client_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+            "first_name": "James",
+            "last_name": "Wong",
+            "title": "Portfolio Manager",
+            "email": "james.wong@citadel.com",
+            "phone": "+1-312-555-0192",
+            "primary": True,
+        }
+    }}
+
+
+# ---------------------------------------------------------------------------
+# Limits
+# ---------------------------------------------------------------------------
+
+
+class ClientLimits(BaseModel):
+    """
+    Credit and trading limits assigned to a client.
+
+    Returned as a single object (not paginated) by
+    GET /clients/{client_id}/limits.
+    """
+
+    client_id: str = Field(..., description="UUID of the client these limits apply to.")
+    credit_limit_usd: float = Field(..., description="Total approved credit line in USD.")
+    credit_used_usd: float = Field(..., description="Credit currently in use.")
+    credit_available_usd: float = Field(..., description="Remaining available credit (limit − used).")
+    max_single_trade_usd: float = Field(
+        ..., description="Maximum notional allowed for a single trade."
+    )
+    approved_asset_classes: List[AssetClass] = Field(
+        ..., description="Asset classes this client is approved to trade."
+    )
+    approved_product_types: List[ProductType] = Field(
+        ..., description="Product types this client is approved to trade."
+    )
+    last_reviewed: date = Field(..., description="Date the limits were last reviewed by credit.")
+
+    model_config = {"json_schema_extra": {
+        "example": {
+            "client_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+            "credit_limit_usd": 500000000,
+            "credit_used_usd": 123000000,
+            "credit_available_usd": 377000000,
+            "max_single_trade_usd": 50000000,
+            "approved_asset_classes": ["EQUITY", "EQUITY_DERIVATIVE"],
+            "approved_product_types": ["STOCK", "ETF", "VANILLA_OPTION", "BARRIER_OPTION"],
+            "last_reviewed": "2024-01-15",
+        }
+    }}

@@ -1,0 +1,178 @@
+"""
+models/market.py
+----------------
+Pydantic models for the Market Data domain:
+  - Instrument
+  - PricePoint
+  - VolStrike / VolExpiry / VolatilitySurface
+  - IndexSummary
+  - IndexConstituent
+"""
+
+from datetime import date
+from typing import List, Optional
+
+from pydantic import BaseModel, Field
+
+from models.enums import Currency, InstrumentType
+
+
+# ---------------------------------------------------------------------------
+# Instrument
+# ---------------------------------------------------------------------------
+
+
+class Instrument(BaseModel):
+    """
+    A tradeable financial instrument (stock, ETF, or index).
+
+    Returned by GET /market/instruments and GET /market/instruments/{ticker}.
+    """
+
+    ticker: str = Field(..., description="Exchange ticker symbol (e.g. 'AAPL', 'SPX').")
+    name: str = Field(..., description="Full display name of the instrument.")
+    type: InstrumentType = Field(..., description="Instrument category.")
+    currency: Currency = Field(..., description="Primary trading currency.")
+    exchange: str = Field(..., description="Primary listing exchange (e.g. 'NASDAQ').")
+    isin: str = Field(..., description="ISO 6166 International Securities Identification Number.")
+    sector: Optional[str] = Field(None, description="GICS sector classification (null for ETFs/indices).")
+    market_cap_usd: Optional[float] = Field(
+        None,
+        description="Market capitalisation in USD at time of data generation (null for ETFs/indices).",
+    )
+
+    model_config = {"json_schema_extra": {
+        "example": {
+            "ticker": "AAPL",
+            "name": "Apple Inc.",
+            "type": "STOCK",
+            "currency": "USD",
+            "exchange": "NASDAQ",
+            "isin": "US0378331005",
+            "sector": "Technology",
+            "market_cap_usd": 2850000000000,
+        }
+    }}
+
+
+# ---------------------------------------------------------------------------
+# Price history
+# ---------------------------------------------------------------------------
+
+
+class PricePoint(BaseModel):
+    """
+    One end-of-day (EOD) price record for an instrument.
+
+    Returned (paginated) by GET /market/instruments/{ticker}/prices.
+    Ordered by date descending.
+    """
+
+    date: date = Field(..., description="Trading date (YYYY-MM-DD).")
+    open: float = Field(..., description="Opening price.")
+    high: float = Field(..., description="Intraday high.")
+    low: float = Field(..., description="Intraday low.")
+    close: float = Field(..., description="Closing price.")
+    volume: int = Field(..., description="Number of shares traded.")
+    adjusted_close: float = Field(
+        ..., description="Dividend- and split-adjusted closing price."
+    )
+
+    model_config = {"json_schema_extra": {
+        "example": {
+            "date": "2024-03-15",
+            "open": 172.30,
+            "high": 174.50,
+            "low": 171.80,
+            "close": 173.95,
+            "volume": 58420000,
+            "adjusted_close": 173.95,
+        }
+    }}
+
+
+# ---------------------------------------------------------------------------
+# Volatility surface
+# ---------------------------------------------------------------------------
+
+
+class VolStrike(BaseModel):
+    """A single strike point on the implied volatility surface."""
+
+    strike: float = Field(..., description="Absolute strike price.")
+    moneyness: float = Field(..., description="Strike / spot price ratio.")
+    iv: float = Field(..., description="Black-Scholes implied volatility (annualised, e.g. 0.215 = 21.5%).")
+
+
+class VolExpiry(BaseModel):
+    """Implied volatility smile for one option expiry date."""
+
+    expiry: date = Field(..., description="Option expiry date.")
+    days_to_expiry: int = Field(..., description="Calendar days from the as_of date to expiry.")
+    strikes: List[VolStrike] = Field(
+        ..., description="At least 5 strike points spanning roughly ±10% moneyness."
+    )
+
+
+class VolatilitySurface(BaseModel):
+    """
+    Volatility data for a single instrument.
+
+    Returned by GET /market/instruments/{ticker}/volatility.
+    Pre-computed at startup; does not change between calls.
+    """
+
+    ticker: str = Field(..., description="Instrument ticker.")
+    as_of: date = Field(..., description="Reference date for all vol calculations.")
+    realized_vol_1m: float = Field(..., description="1-month realised historical volatility.")
+    realized_vol_3m: float = Field(..., description="3-month realised historical volatility.")
+    realized_vol_1y: float = Field(..., description="1-year realised historical volatility.")
+    implied_vol_surface: List[VolExpiry] = Field(
+        ..., description="Implied vol surface with at least 3 expiry slices."
+    )
+
+
+# ---------------------------------------------------------------------------
+# Indices
+# ---------------------------------------------------------------------------
+
+
+class IndexSummary(BaseModel):
+    """
+    Summary record for a market index.
+
+    Returned (paginated) by GET /market/indices.
+    """
+
+    index_id: str = Field(..., description="UUID v4 identifier for the index.")
+    ticker: str = Field(..., description="Index ticker symbol (e.g. 'SPX', 'SX5E').")
+    name: str = Field(..., description="Full index name (e.g. 'S&P 500').")
+    currency: Currency = Field(..., description="Index base currency.")
+    country: str = Field(..., description="Primary country / region (e.g. 'US', 'EU').")
+    num_constituents: int = Field(..., description="Number of constituent securities.")
+
+    model_config = {"json_schema_extra": {
+        "example": {
+            "index_id": "3fa85f64-5717-4562-b3fc-2c963f66afa6",
+            "ticker": "SPX",
+            "name": "S&P 500",
+            "currency": "USD",
+            "country": "US",
+            "num_constituents": 500,
+        }
+    }}
+
+
+class IndexConstituent(BaseModel):
+    """
+    A single constituent of a market index.
+
+    Returned (paginated, weight-descending) by
+    GET /market/indices/{index_id}/constituents.
+    """
+
+    ticker: str = Field(..., description="Constituent ticker symbol.")
+    name: str = Field(..., description="Constituent company name.")
+    weight: float = Field(..., description="Index weight as a decimal (e.g. 0.0712 = 7.12%).")
+    sector: Optional[str] = Field(None, description="GICS sector of the constituent.")
+    market_cap_usd: Optional[float] = Field(None, description="Market cap in USD.")

@@ -1,0 +1,43 @@
+"""
+config.py
+---------
+Application-level settings.
+All values can be overridden via environment variables.
+"""
+
+import os
+
+
+class Settings:
+    """Central configuration for the Mock Investment Bank API."""
+
+    # ------------------------------------------------------------------
+    # Data seed
+    # ------------------------------------------------------------------
+    SEED: int = int(os.getenv("MOCK_SEED", "42"))
+    """Fixed random seed used for all data generation.
+    Override with the MOCK_SEED environment variable to get a
+    different but equally stable dataset.
+    """
+
+    # ------------------------------------------------------------------
+    # Pagination
+    # ------------------------------------------------------------------
+    DEFAULT_PAGE_SIZE: int = 20
+    MAX_PAGE_SIZE: int = 100
+
+    # ------------------------------------------------------------------
+    # API metadata
+    # ------------------------------------------------------------------
+    API_VERSION: str = "v1"
+    API_PREFIX: str = f"/api/{API_VERSION}"
+    TITLE: str = "Mock Investment Bank API"
+    DESCRIPTION: str = (
+        "A mock REST API mimicking a typical investment bank backend. "
+        "Designed to test natural language API querying systems. "
+        "All data is seeded at startup and remains stable across calls."
+    )
+    VERSION: str = "1.0.0"
+
+
+settings = Settings()

@@ -1,0 +1,115 @@
+"""
+models/common.py
+----------------
+Shared Pydantic models used across all domains:
+  - Page[T]      — generic paginated response envelope
+  - ErrorResponse — standard error body
+  - paginate()   — helper to slice a list and build a Page dict
+"""
+
+import math
+from typing import Generic, List, Optional, TypeVar
+
+from pydantic import BaseModel, Field
+
+
+T = TypeVar("T")
+
+
+# ---------------------------------------------------------------------------
+# Pagination
+# ---------------------------------------------------------------------------
+
+
+class Page(BaseModel, Generic[T]):
+    """
+    Generic paginated response envelope returned by all list endpoints.
+
+    Attributes
+    ----------
+    data:
+        The items on the current page.
+    page:
+        Current 1-indexed page number.
+    page_size:
+        Number of items requested per page.
+    total:
+        Total number of items matching the applied filters.
+    total_pages:
+        Total number of pages given the current page_size.
+    """
+
+    data: List[T] = Field(..., description="Items on the current page.")
+    page: int = Field(..., ge=1, description="Current page number (1-indexed).")
+    page_size: int = Field(..., ge=1, description="Number of items per page.")
+    total: int = Field(..., ge=0, description="Total items matching the filter.")
+    total_pages: int = Field(..., ge=1, description="Total number of pages.")
+
+
+def paginate(items: list, page: int, page_size: int) -> dict:
+    """
+    Slice *items* for the requested *page* and return a dict matching
+    the Page envelope schema.
+
+    If *page* exceeds the last page, an empty data list is returned
+    (not an error), consistent with the API spec.
+
+    Parameters
+    ----------
+    items:
+        Full filtered list of items (already filtered, not yet sliced).
+    page:
+        1-indexed page number.
+    page_size:
+        Maximum number of items to include in the page.
+
+    Returns
+    -------
+    dict
+        Ready to be passed to ``Page[T](**result)`` or returned directly
+        from a route via ``response_model=Page[T]``.
+    """
+    total = len(items)
+    total_pages = max(1, math.ceil(total / page_size))
+    start = (page - 1) * page_size
+    end = start + page_size
+    return {
+        "data": items[start:end],
+        "page": page,
+        "page_size": page_size,
+        "total": total,
+        "total_pages": total_pages,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Error responses
+# ---------------------------------------------------------------------------
+
+
+class ErrorResponse(BaseModel):
+    """
+    Standard error body returned for all 4xx and 5xx responses.
+
+    Attributes
+    ----------
+    detail:
+        Human-readable description of the error.
+    code:
+        Machine-readable error code (NOT_FOUND, INVALID_PARAM, …).
+    field:
+        Optional — name of the query param or body field that triggered
+        a validation error.
+    """
+
+    detail: str = Field(..., description="Human-readable error description.")
+    code: str = Field(
+        ...,
+        description=(
+            "Machine-readable error code. "
+            "One of: NOT_FOUND, INVALID_PARAM, VALIDATION_ERROR, INTERNAL_ERROR."
+        ),
+    )
+    field: Optional[str] = Field(
+        None, description="Field name that caused the error, if applicable."
+    )

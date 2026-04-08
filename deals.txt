@@ -1,0 +1,182 @@
+"""
+routers/deals.py
+----------------
+Deals & Trades endpoints:
+
+  GET /deals                              — list deals (filterable)
+  GET /deals/{deal_id}                    — full deal header
+  GET /deals/{deal_id}/trades             — trades under a deal
+  GET /deals/{deal_id}/trades/{trade_id}  — single trade detail
+  GET /deals/{deal_id}/pnl               — deal P&L breakdown
+"""
+
+from datetime import date
+from typing import Optional
+
+from fastapi import APIRouter, Depends, HTTPException, Query
+
+from dependencies import PaginationParams, pagination_dep
+from models.common import Page, paginate
+from models.deal import DealFull, DealPnL, DealSummary, TradeFull, TradeSummary
+from models.enums import AssetClass, DealStatus, TradeDirection, TradeStatus
+from seed.store import store
+
+router = APIRouter(prefix="/deals", tags=["Deals & Trades"])
+
+
+def _get_deal_or_404(deal_id: str) -> dict:
+    """Return the deal dict or raise HTTP 404."""
+    deal = store.deals.get(deal_id)
+    if deal is None:
+        raise HTTPException(
+            status_code=404,
+            detail={"detail": f"Deal '{deal_id}' not found.", "code": "NOT_FOUND"},
+        )
+    return deal
+
+
+# ---------------------------------------------------------------------------
+# Deals
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "",
+    response_model=Page[DealSummary],
+    summary="List deals",
+    description=(
+        "Returns a paginated list of deals. "
+        "Filter by ``client_id`` to retrieve all deals for a specific client "
+        "(required for the NL multi-step resolution chains)."
+    ),
+)
+def list_deals(
+    client_id: Optional[str] = Query(
+        None, description="Filter deals belonging to this client UUID."
+    ),
+    status: Optional[DealStatus] = Query(None, description="Filter by deal status."),
+    desk: Optional[str] = Query(
+        None, description="Filter by trading desk (e.g. 'EQ_FLOW', 'EQ_DERIV', 'STRUCTURING')."
+    ),
+    asset_class: Optional[AssetClass] = Query(None, description="Filter by asset class."),
+    from_date: Optional[date] = Query(
+        None, alias="from", description="Include deals created on or after this date."
+    ),
+    to_date: Optional[date] = Query(
+        None, alias="to", description="Include deals created on or before this date."
+    ),
+    pagination: PaginationParams = Depends(pagination_dep),
+) -> dict:
+    items = list(store.deals.values())
+
+    if client_id:
+        items = [d for d in items if d["client_id"] == client_id]
+    if status is not None:
+        items = [d for d in items if d["status"] == status.value]
+    if desk:
+        items = [d for d in items if d["desk"].upper() == desk.upper()]
+    if asset_class is not None:
+        items = [d for d in items if d["asset_class"] == asset_class.value]
+    if from_date:
+        items = [d for d in items if d["created_at"].date() >= from_date]
+    if to_date:
+        items = [d for d in items if d["created_at"].date() <= to_date]
+
+    return paginate(items, pagination.page, pagination.page_size)
+
+
+@router.get(
+    "/{deal_id}",
+    response_model=DealFull,
+    summary="Get deal",
+    description="Returns the full deal header including personnel and timeline metadata.",
+    responses={404: {"description": "Deal not found."}},
+)
+def get_deal(deal_id: str) -> dict:
+    return _get_deal_or_404(deal_id)
+
+
+# ---------------------------------------------------------------------------
+# Trades
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{deal_id}/trades",
+    response_model=Page[TradeSummary],
+    summary="List trades under a deal",
+    description="Returns a paginated list of individual trades booked under the specified deal.",
+    responses={404: {"description": "Deal not found."}},
+)
+def list_trades(
+    deal_id: str,
+    status: Optional[TradeStatus] = Query(None, description="Filter by trade status."),
+    direction: Optional[TradeDirection] = Query(None, description="Filter by trade direction."),
+    pagination: PaginationParams = Depends(pagination_dep),
+) -> dict:
+    _get_deal_or_404(deal_id)
+    trade_dict = store.trades.get(deal_id, {})
+    items = list(trade_dict.values())
+
+    if status is not None:
+        items = [t for t in items if t["status"] == status.value]
+    if direction is not None:
+        items = [t for t in items if t["direction"] == direction.value]
+
+    return paginate(items, pagination.page, pagination.page_size)
+
+
+@router.get(
+    "/{deal_id}/trades/{trade_id}",
+    response_model=TradeFull,
+    summary="Get trade detail",
+    description=(
+        "Returns the full trade record including product snapshot, execution metadata and fees. "
+        "Returns 404 if the trade does not belong to the specified deal."
+    ),
+    responses={
+        404: {"description": "Deal or trade not found, or trade does not belong to the deal."},
+    },
+)
+def get_trade(deal_id: str, trade_id: str) -> dict:
+    _get_deal_or_404(deal_id)
+    trade_dict = store.trades.get(deal_id, {})
+    trade = trade_dict.get(trade_id)
+    if trade is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "detail": f"Trade '{trade_id}' not found under deal '{deal_id}'.",
+                "code": "NOT_FOUND",
+            },
+        )
+    return trade
+
+
+# ---------------------------------------------------------------------------
+# P&L
+# ---------------------------------------------------------------------------
+
+
+@router.get(
+    "/{deal_id}/pnl",
+    response_model=DealPnL,
+    summary="Get deal P&L",
+    description=(
+        "Returns aggregated P&L breakdown for a deal, including realised, unrealised, "
+        "fees and net P&L, with a per-trade breakdown. Single object — not paginated."
+    ),
+    responses={404: {"description": "Deal not found."}},
+)
+def get_pnl(deal_id: str) -> dict:
+    deal = _get_deal_or_404(deal_id)
+    pnl = deal.get("_pnl")
+    if pnl is None:
+        raise HTTPException(
+            status_code=404,
+            detail={
+                "detail": f"P&L data not available for deal '{deal_id}'.",
+                "code": "NOT_FOUND",
+            },
+        )
+    return pnl
